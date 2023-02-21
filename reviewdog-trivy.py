@@ -16,7 +16,7 @@ def report_array():
 
 def main():
     baseline = json.load(sys.stdin)
-    if not baseline['Results']:
+    if not baseline.get('Results'):
         baseline['Results'] = {}
 
     results = []
@@ -35,6 +35,7 @@ def main():
             if secrets:
                 for secret in secrets:
                     test = report_array()
+                    test['location']['path'] = finding['Target']
                     test['location']['range']['start']['line'] = secret.get("StartLine") 
                     test['location']['range']['start']['column'] = 1 
                     test['message'] = "Secret found: " + secret.get('Title')
