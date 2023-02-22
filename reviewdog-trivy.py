@@ -3,14 +3,19 @@
 import sys
 import json
 
-# Example output: {"message": "<msg>", "location": {"path": "<file path>", "range": {"start": {"line": 14, "column": 15}}}, "severity": "ERROR"}
+# Example output: {"message": "<msg>", "location": {"path": "<file path>", "range": {"start": {"line": 14, "column": 15}, "end": {"line": 14, "column": 18}}}, "severity": "ERROR"}
 def report_array():
     test = {}
     test['location'] = {}
     test['location']['range'] = {}
     test['location']['range']['start'] = {}
+    test['location']['range']['end'] = {}
     test['location']['range']['start']['line'] = 1 
     test['location']['range']['start']['column'] = 1 
+    test['location']['range']['end']['line'] =  10
+    test['location']['range']['end']['column'] = 1 
+
+
     test['severity'] = "ERROR"
     return test
 
@@ -24,7 +29,7 @@ def main():
         test = report_array()
         test['location']['path'] = finding['Target']
         if finding.get("Class") == "lang-pkgs":
-            test['message'] = "|Severity|PkgName|InstalledVersion|VulnerabilityID|URL|\n|---|---|---|---|---|\n"
+            test['message'] = "\n|Severity|PkgName|InstalledVersion|VulnerabilityID|URL|\n|---|---|---|---|---|\n"
             vulns = finding.get("Vulnerabilities")
             if vulns:
                 for vuln in vulns:
@@ -38,6 +43,7 @@ def main():
                     test['location']['path'] = finding['Target']
                     test['location']['range']['start']['line'] = secret.get("StartLine") 
                     test['location']['range']['start']['column'] = 1 
+                    test['location']['range']['end']['line'] = secret.get("EndLine") 
                     test['message'] = "Secret found: " + secret.get('Title')
                     results.append(test)
         else:
