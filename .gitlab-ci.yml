@@ -1,0 +1,325 @@
+stages:
+  - security-check
+
+reviewdogTfsecTflint:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_TFSEC_FLAGS=""
+    - export INPUT_TOOL_NAME="tfsec"
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_FLAGS="--module"
+  script:
+    - |
+      "tfsec" --format=json ${INPUT_TFSEC_FLAGS:-} . \
+      | jq -r -f "/opt/tfsec-to-rdjson.jq" \
+      |  "reviewdog" -f=rdjson \
+          -name="tfsec" \
+          -reporter="${INPUT_REPORTER:-local}" \
+          -level="${INPUT_LEVEL}" \
+          -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+          -filter-mode="${INPUT_FILTER_MODE}" 
+    - |
+      "tflint" --format=checkstyle ${INPUT_FLAGS} . \
+        | "reviewdog" -f=checkstyle \
+            -name="tflint" \
+            -reporter="${INPUT_REPORTER}" \
+            -level="${INPUT_LEVEL}" \
+            -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+            -filter-mode="${INPUT_FILTER_MODE}"
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+
+reviewdogHadolint:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_HADOLINT_IGNORE=""
+    - export INPUT_HADOLINT_FLAGS=""
+    - export INPUT_TOOL_NAME="tfsec"
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+  script:
+    - |
+      git ls-files --exclude='*Dockerfile*' --ignored --cached ${EXCLUDES} \
+        | xargs hadolint -f json ${INPUT_HADOLINT_FLAGS} \
+        | jq -f "/opt/hadolint-to-rdjson.jq" -c \
+        | reviewdog -f="rdjson" \
+          -name="${INPUT_TOOL_NAME}" \
+          -reporter="${INPUT_REPORTER}" \
+          -filter-mode="${INPUT_FILTER_MODE}" \
+          -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+          -level="${INPUT_LEVEL}" \
+          ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+reviewdogShellcheck:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_TOOL_NAME="shellcheck"
+  script:
+    - |
+      FILES=$(find . -type f -iname "*.sh")
+      shellcheck -f json  ${INPUT_SHELLCHECK_FLAGS:-'--external-sources'} ${FILES} \
+        | jq -r '.[] | "\(.file):\(.line):\(.column):\(.level):\(.message) [SC\(.code)](https://github.com/koalaman/shellcheck/wiki/SC\(.code))"' \
+        | reviewdog \
+            -efm="%f:%l:%c:%t%*[^:]:%m" \
+            -name="${INPUT_TOOL_NAME}" \
+            -reporter="${INPUT_REPORTER}" \
+            -filter-mode="${INPUT_FILTER_MODE}" \
+            -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+            -level="${INPUT_LEVEL}" \
+            ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+reviewdogAnsible:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_TOOL_NAME="ansible-lint"
+  script:
+    - |
+      ansible-lint -p ${INPUT_ANSIBLELINT_FLAGS} \
+        | reviewdog -efm="%f:%l: %m" \
+            -name="${INPUT_TOOL_NAME}" \
+            -reporter="${INPUT_REPORTER:-local}" \
+            -level="${INPUT_LEVEL}" \
+            -filter-mode="${INPUT_FILTER_MODE}" \
+            -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+            ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+reviewdogCheckov:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_TOOL_NAME="checkov"
+  script:
+    - |
+      [[ ! -z "$INPUT_SKIP_CHECK" ]] && SKIP_CHECK_FLAG="--skip-check $INPUT_SKIP_CHECK"
+    - |
+      checkov -d . -o json $INPUT_SKIP_CHECK 2>/dev/null \
+        | jq -r '. | if (type == "array") then .[].results.failed_checks[] else .results.failed_checks[] end | "\(.file_path[1:]):\(.file_line_range[0]):\(.file_line_range[1]) \(.check_name) \(.guideline)"' \
+        | reviewdog -efm="%f:%l:%e %m" \
+            -name="${INPUT_TOOL_NAME}" \
+            -reporter="${INPUT_REPORTER:-local}" \
+            -level="${INPUT_LEVEL}" \
+            -filter-mode="${INPUT_FILTER_MODE}" \
+            -fail-on-error="${INPUT_FAIL_ON_ERROR}" ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+reviewdogSemgrep:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_TOOL_NAME="semgrep"
+    - export INPUT_SEMGREP_TARGET="."
+  script:
+    - |
+      semgrep --config="${INPUT_SEMGREP_CONFIG:-auto}" --json ${INPUT_SEMGREP_TARGET} \
+        | jq -r '.results[] | "\(.extra.severity[0:1]):\(.path):\(.end.line) \(.extra.message)"' \
+        | reviewdog \
+            -efm="%t:%f:%l %m" \
+            -name="${INPUT_TOOL_NAME}" \
+            -reporter="${INPUT_REPORTER:-local}" \
+            -filter-mode="${INPUT_FILTER_MODE}" \
+            -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+            -level="${INPUT_LEVEL}" \
+            ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+reviewdogGitleaks:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_TOOL_NAME="gitleaks"
+  script:
+    - |
+      gitleaks detect -f json  -r /proc/self/fd/1 2>/dev/null \
+        | jq -r '.[] | "e:\(.File):\(.StartLine) Secret found \(.Description)"' \
+        | reviewdog \
+            -efm="%t:%f:%l %m" \
+            -name="${INPUT_TOOL_NAME}" \
+            -reporter="${INPUT_REPORTER:-local}" \
+            -filter-mode="${INPUT_FILTER_MODE}" \
+            -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+            -level="${INPUT_LEVEL}" \
+            ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+reviewdogFlake:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_TOOL_NAME="flake8"
+    - export INPUT_FLAKE8_ARGS=""
+  script:
+    - |
+      flake8 . ${INPUT_FLAKE8_ARGS} 2>&1 \
+        | reviewdog \
+            -f=flake8 \
+            -name="${INPUT_TOOL_NAME}" \
+            -reporter="${INPUT_REPORTER:-local}" \
+            -filter-mode="${INPUT_FILTER_MODE}" \
+            -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+            -level="${INPUT_LEVEL}" \
+            ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+# Tested but too many error find
+reviewdogYamllint:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_TOOL_NAME="yamllint"
+    - export INPUT_YAMLLINT_ARGS=""
+  script:
+    - |
+      yamllint --format "parsable" ${INPUT_YAMLLINT_ARGS:-'.'} |
+          reviewdog \
+              -efm="%f:%l:%c: %m" \
+              -name="${INPUT_TOOL_NAME}" \
+              -reporter="${INPUT_REPORTER:-local}" \
+              -level="${INPUT_LEVEL}" \
+              -filter-mode="${INPUT_FILTER_MODE}" \
+              -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+              ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
+
+reviewdogTrivy:
+  stage: security-check
+  image: ghcr.io/supu2/reviewdog-gitlab-ci:main
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  before_script:
+    - export INPUT_LEVEL="error"
+    - export INPUT_REPORTER="gitlab-mr-discussion"
+    - export INPUT_FILTER_MODE="nofilter"
+    - export INPUT_FAIL_ON_ERROR="false"
+    - export INPUT_REVIEWDOG_FLAGS=""
+    - export INPUT_TOOL_NAME="trivy"
+    - export INPUT_TRIVY_ARGS=""
+  script:
+    - |
+      trivy fs . -f json -q |
+        reviewdog-trivy|
+          reviewdog \
+              -f=rdjsonl \
+              -name="${INPUT_TOOL_NAME}" \
+              -reporter="${INPUT_REPORTER:-local}" \
+              -level="${INPUT_LEVEL}" \
+              -filter-mode="${INPUT_FILTER_MODE}" \
+              -fail-on-error="${INPUT_FAIL_ON_ERROR}" \
+              ${INPUT_REVIEWDOG_FLAGS}
+  only:
+    refs:
+      - merge_requests
+  allow_failure: true
+  when: manual
